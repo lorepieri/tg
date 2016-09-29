@@ -51,7 +51,10 @@ def handle(msg):
 		if command == 'Indietro':
 			markup = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Mappa')], [KeyboardButton(text='S1'), KeyboardButton(text='S2'), KeyboardButton(text='S3'), KeyboardButton(text='S4'), KeyboardButton(text='S5')], [KeyboardButton(text='S6'), KeyboardButton(text='S7'), KeyboardButton(text='S8'), KeyboardButton(text='S9'), KeyboardButton(text='S10')]])
 			bot.sendMessage(chat_id, start_message, parse_mode = "HTML", reply_markup = markup) 		
+                
 
+                if command == 'Mappa':
+			bot.sendMessage(chat_id, "Quando i sensori saranno posizionati qui verra' spiegato dove si trovano (kilometrica e altre informazioni)")
 		if command == 'S1' or command == 'S2' or command == 'S3' or command == 'S4' or command == 'S5' or command == 'S6' or command == 'S7' or command == 'S8' or command == 'S9' or command == 'S10':
 			markup = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Ultimi 15 minuti'), KeyboardButton(text='Ultime 2 ore')], [KeyboardButton(text='Ultime 24 ore')], [KeyboardButton(text='Indietro')]])
 			bot.sendMessage(chat_id, "Scegli un'opzione",  reply_markup = markup)
@@ -91,6 +94,8 @@ def handle(msg):
 				sql_query = "SELECT * FROM temperaturedata WHERE dateandtime >= DATE_SUB(NOW(), INTERVAL 2 HOUR) AND sensor LIKE {0}".format(sensor_choice)
 				cursor.execute(sql_query)
 				results = cursor.fetchall()
+				if len(results) == 0:
+					bot.sendMessage(chat_id, "Errore 10: Empty list\n\nCheck sensors")
 				for row in results:
 					dateandtime = row[0]
 					sensor = row[1]
@@ -106,6 +111,8 @@ def handle(msg):
 				sql_query = "SELECT * FROM temperaturedata WHERE dateandtime >= DATE_SUB(NOW(),INTERVAL 15 MINUTE) AND sensor LIKE {0};".format(sensor_choice)
 				cursor.execute(sql_query)
 				results = cursor.fetchall()
+				if len(results) == 0:
+					bot.sendMessage(chat_id, "Errore 10: Empty list\n\nCheck sensors")
 				for row in results:
 					dateandtime = row[0]
 					sensor = row[1]
@@ -118,7 +125,7 @@ def handle(msg):
 
 		if command == 'Ultime 24 ore':
 			try:
-				sql_query = "SELECT * FROM temperaturedata WHERE dateandtime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) AND sensor LIKE {0};".format(sensor_choice)
+				sql_query = "SELECT * FROM temperaturedata WHERE dateandtime > DATE_SUB(NOW(), INTERVAL 24 HOUR) AND sensor LIKE {0};".format(sensor_choice)
 				cursor.execute(sql_query)
 				results = cursor.fetchall()
 				if len(results) == 0:
@@ -128,7 +135,7 @@ def handle(msg):
 					sensor = row[1]
 					temperature = row[2]
 					humidity = row[3]
-					formatted_string = "Data e ora: \n{0} \nSensore: {1} \nTemperatura: {2} \nUmidita': {3} \n---------------\nState: {4},\nSensor: {5}".format(dateandtime, sensor, temperature, humidity, state, sensor_choice)
+					formatted_string = "{0} Sens: {1} T: {2} H: {3}".format(dateandtime, sensor, temperature, humidity)
 					bot.sendMessage(chat_id, formatted_string)
 			except Exception, e:
 				bot.sendMessage(chat_id, "Errore 101: DB execute error\n\n" + str(e))
