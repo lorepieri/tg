@@ -1,47 +1,4 @@
-#For the interface with the DHT22 Sensor
-#Copyright (c) 2014 Adafruit Industries
-#Author: Tony DiCola
-
-#For the rest of the program
-#AVR Group
-#Author: Lorenzo Pieri
-
-
-import sys
-
-import Adafruit_DHT
-
-
-# Parse command line parameters.
-sensor_args = { '11': Adafruit_DHT.DHT11,
-                '22': Adafruit_DHT.DHT22,
-                '2302': Adafruit_DHT.AM2302 }
-if len(sys.argv) == 3 and sys.argv[1] in sensor_args:
-    sensor = sensor_args[sys.argv[1]]
-    pin = sys.argv[2]
-else:
-    print('usage: sudo ./Adafruit_DHT.py [11|22|2302] GPIOpin#')
-    print('example: sudo ./Adafruit_DHT.py 2302 4 - Read from an AM2302 connected to GPIO #4')
-    sys.exit(1)
-
-# Try to grab a sensor reading.  Use the read_retry method which will retry up
-# to 15 times to get a sensor reading (waiting 2 seconds between each retry).
-adahumidity, adatemperature = Adafruit_DHT.read_retry(sensor, pin)
-
-# Un-comment the line below to convert the temperature to Fahrenheit.
-# temperature = temperature * 9/5.0 + 32
-
-# Note that sometimes you won't get a reading and
-# the results will be null (because Linux can't
-# guarantee the timing of calls to read the sensor).
-# If this happens try again!
-if adahumidity is not None and adatemperature is not None:
-    print('Temp={0:0.1f}*  Humidity={1:0.1f}%'.format(adatemperature, adahumidity))
-else:
-    print('Failed to get reading. Try again!')
-    sys.exit(1)
-    
-# Copyright (c) 2015
+﻿# Copyright (c) 2015
 # Author: Janne Posio
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -87,23 +44,53 @@ from email.MIMEText import MIMEText
 # function for reading DHT22 sensors
 def sensorReadings(gpio, sensor):
 	
-	intTemp = float(adatemperature)
-	intHumidity = float(adahumidity)
+	configurations = getConfigurations()	
+	adafruit = configurations["adafruitpath"]
+
+	sensorReadings = subprocess.check_output(['sudo',adafruit,sensor,gpio])
+
+	try:
+		# try to read neagtive numbers
+		temperature = re.findall(r"Temp=(-\d+.\d+)", sensorReadings)[0]
+	except: 
+		# if negative numbers caused exception, they are supposed to be positive
+		try:
+			temperature = re.findall(r"Temp=(\d+.\d+)", sensorReadings)[0]
+		except:
+			pass
+	humidity = re.findall(r"Humidity=(\d+.\d+)", sensorReadings)[0]
+	intTemp = float(temperature)
+	intHumidity = float(humidity)
+    print("working..")
 
 	return intTemp, intHumidity
 
 # function for getting weekly average temperatures.
 def getWeeklyAverageTemp(sensor):
+
+	weekAverageTemp = ""	
 	
-	return
+	date = 	datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+	delta = (datetime.date.today() - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
+
+    	try:
+        	sqlCommand = "SELECT AVG(temperature) FROM temperaturedata WHERE dateandtime BETWEEN '%s' AND '%s' AND sensor='%s'" % (delta,date,sensor)
+		data = databaseHelper(sqlCommand,"Select")
+		weekAverageTemp = "%.2f" % data
+   	except:
+		pass
+	
+	return weekAverageTemp
 
 # function that sends emails, either warning or weekly averages in order to see that pi is alive
 def emailWarning(msg, msgType):
-	
+
 	return
 	
 # helper function for database actions. Handles select, insert and sqldumpings. Update te be added later
 def databaseHelper(sqlCommand,sqloperation):
+
+	configurations = getConfigurations()
 
 	host = "172.16.12.14"
 	user = "logger"
@@ -148,27 +135,131 @@ def databaseHelper(sqlCommand,sqloperation):
 	
 # function for checking log that when last warning was sended, also inserts new entry to log if warning is sent
 def checkWarningLog(sensor, sensortemp):
-	
-	return
+
+	currentTime = datetime.datetime.now()
+	currentTimeAsString = datetime.datetime.strftime(currentTime,"%Y-%m-%d %H:%M:%S")
+	lastLoggedTime = ""
+	lastSensor = ""
+	triggedLimit = ""
+	lastTemperature = ""
+	warning = ""
+	okToUpdate = False
+	# sql command for selecting last send time for sensor that trigged the warning
+
+	sqlCommand = "select * from mailsendlog where triggedsensor='%s' and mailsendtime IN (SELECT max(mailsendtime)FROM mailsendlog where triggedsensor='%s')" % (sensor,sensor)
+	data = databaseHelper(sqlCommand,"Select")
+
+	# If there weren't any entries in database, then it is assumed that this is fresh database and first entry is needed
+	if data == None:
+	       	sqlCommand = "INSERT INTO mailsendlog SET mailsendtime='%s', triggedsensor='%s', triggedlimit='%s' ,lasttemperature='%s'" % (currentTimeAsString,sensor,"0.0",sensortemp)
+		databaseHelper(sqlCommand,"Insert")
+		lastLoggedTime = currentTimeAsString
+		lastTemperature = sensortemp
+		okToUpdate = True
+	else:
+		lastLoggedTime = data[0]
+		lastSensor = data[1]
+		triggedLimit = data[2]
+		lastTemperature = data[3]
+
+	# check that has couple of hours passed from the time that last warning was sended.
+	# this check is done so you don't get warning everytime that sensor is trigged. E.g. sensor is checked every 5 minutes, temperature is lower than trigger -> you get warning every 5 minutes and mail is flooded.
+	try:
+		delta = (currentTime - lastLoggedTime).total_seconds()
+		passedTime = delta // 3600
+
+		if passedTime > 2:
+			okToUpdate = True
+		else:
+			pass
+	except:
+		pass
+
+	# another check. If enough time were not passed, but if temperature has for some reason increased or dropped 5 degrees since last alarm, something might be wrong and warning mail is needed
+	# TODO: Add humidity increase / decrease check as well...requires change to database as well.
+	if okToUpdate == False:
+		if "conchck" not in sensor:
+			if sensortemp > float(lastTemperature) + 5.0:
+				okToUpdate = True
+				warning = "NOTE: Temperature increased 5 degrees"
+			if sensortemp < float(lastTemperature) - 5.0:
+				okToUpdate = True
+				warning = "NOTE: Temperature decreased 5 degrees"
+			
+	return okToUpdate, warning
 
 	# Function for checking limits. If temperature is lower or greater than limit -> do something
 def checkLimits(sensor,sensorTemperature,sensorHumidity,sensorhighlimit,sensorlowlimit,humidityHighLimit,humidityLowLimit):
+	
+	check = True
+	warningmsg = ""
 
-	return
+	# check temperature measurements against limits
+	if float(sensorTemperature) < float(sensorlowlimit):
+		warningmsg = "Temperature low on sensor: {0}\nTemperature: {1}\nTemperature limit: {2}\nHumidity: {3}".format(sensor,sensorTemperature,sensorlowlimit,sensorHumidity)
+		check = False
+	elif float(sensorTemperature) > float(sensorhighlimit):
+		warningmsg = "Temperature high on sensor: {0}\nTemperature: {1}\nTemperature limit: {2}\nHumidity: {3}".format(sensor,sensorTemperature,sensorhighlimit,sensorHumidity)
+		check = False
+
+	# check humidity measurements against limits
+	elif float(sensorHumidity) < float(humidityLowLimit):
+		warningmsg = "Humidity low on sensor: {0}\nTemperature: {1}\nHumidity limit: {2}\nHumidity: {3}".format(sensor,sensorTemperature,humidityLowLimit,sensorHumidity)
+		check = False
+        elif float(sensorHumidity) > float(humidityHighLimit):
+       	        warningmsg = "Humidity high on sensor: {0}\nTemperature: {1}\nHumidity limit: {2}\nHumidity: {3}".format(sensor,sensorTemperature,humidityHighLimit,sensorHumidity)
+                check = False
+
+	return check,warningmsg
 	
 	# helper function for getting configurations from config json file
+def getConfigurations():
+
+	path = os.path.dirname(os.path.realpath(sys.argv[0]))
+
+	#get configs
+	configurationFile = path + '/config.json'
+	configurations = json.loads(open(configurationFile).read())
+
+	return configurations
 
 def main():
 
 	currentTime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+	configurations = getConfigurations()
 
 	# how many sensors there is 1 or 2
-	sensorsToRead = 1
+	sensorsToRead = "1"
 		
 	# Sensor names to add to database, e.g. carage, outside
 	sensor1 = "Sensore 2"
+	sensor2 = configurations["sensors"][0]["sensor2"]
 
+	# temperature limits for triggering alarms
+	sensor1lowlimit = configurations["triggerlimits"][0]["sensor1lowlimit"]
+	sensor2lowlimit = configurations["triggerlimits"][0]["sensor2lowlimit"]
+	sensor1highlimit = configurations["triggerlimits"][0]["sensor1highlimit"]
+	sensor2highlimit = configurations["triggerlimits"][0]["sensor2highlimit"]
+
+	# humidity limits for triggering alarms
+	sensor1_humidity_low_limit = configurations["humiditytriggers"][0]["sensor1_humidity_low_limit"]
+	sensor1_humidity_high_limit = configurations["humiditytriggers"][0]["sensor1_humidity_high_limit"]
+	sensor2_humidity_low_limit = configurations["humiditytriggers"][0]["sensor2_humidity_low_limit"]
+	sensor2_humidity_high_limit = configurations["humiditytriggers"][0]["sensor2_humidity_high_limit"]
+
+	# Sensor gpios
+	gpioForSensor1 = configurations["sensorgpios"][0]["gpiosensor1"]
+	gpioForSensor2 = configurations["sensorgpios"][0]["gpiosensor2"]
+	
+	# Backup enabled
+	backupEnabled = configurations["sqlBackupDump"][0]["backupDumpEnabled"]
+	backupHour = configurations["sqlBackupDump"][0]["backupHour"]
+	
+	# Connection check enabled
+	connectionCheckEnabled = configurations["connectionCheck"][0]["connectionCheckEnabled"]
+	connectionCheckDay = configurations["connectionCheck"][0]["connectionCheckDay"]
+	connectionCheckHour = configurations["connectionCheck"][0]["connectionCheckHour"]
 
 	# type of the sensor used, e.g. DHT22 = 22
 	sensorType = "22"
