@@ -9,7 +9,7 @@ from telepot.namedtuple import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboar
 
 
 #Bot token
-bot = telepot.Bot('253194885:AAHESX3CfiOB2Kh9OYSdhvBv2fP098a2mM8')
+bot = telepot.Bot('******************************************')
 
 #Database
 host = 'localhost'
